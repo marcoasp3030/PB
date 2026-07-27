@@ -6,7 +6,6 @@ import { Router, Request, Response } from "express";
 import { pool } from "../config/database";
 import bcrypt from "bcryptjs";
 import axios from "axios";
-
 const router = Router();
 
 // POST /api/functions/create-company-user
@@ -57,45 +56,115 @@ router.post("/create-person-login", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Dados obrigatórios ausentes" });
   }
 
+  const emailNorm = String(email).toLowerCase().trim();
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    const passwordHash = await bcrypt.hash(password, 12);
-    const { rows } = await client.query(
-      `INSERT INTO users (email, password_hash, email_confirmed)
-       VALUES ($1, $2, true) RETURNING id`,
-      [email.toLowerCase().trim(), passwordHash]
-    );
-
-    const userId = rows[0].id;
-
-    // Get person's company
     const { rows: personRows } = await client.query(
-      `SELECT company_id FROM funcionarios_clientes WHERE id = $1`,
+      `SELECT id, company_id, nome, user_id FROM funcionarios_clientes WHERE id = $1`,
       [person_id]
     );
+    if (personRows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Pessoa não encontrada" });
+    }
+    const person = personRows[0];
 
-    await client.query(
-      `INSERT INTO profiles (user_id, company_id, role) VALUES ($1, $2, 'user')`,
-      [userId, personRows[0]?.company_id]
+    let userId: string;
+    let reusedExistingUser = false;
+
+    if (person.user_id) {
+      // Já vinculada: apenas redefine a senha
+      userId = person.user_id;
+      reusedExistingUser = true;
+      const passwordHash = await bcrypt.hash(password, 12);
+      await client.query(
+        `UPDATE users SET password_hash = $1, email_confirmed = true, email = $2 WHERE id = $3`,
+        [passwordHash, emailNorm, userId]
+      );
+    } else {
+      const { rows: existingUsers } = await client.query(
+        `SELECT id FROM users WHERE email = $1`,
+        [emailNorm]
+      );
+
+      if (existingUsers.length > 0) {
+        userId = existingUsers[0].id;
+        reusedExistingUser = true;
+
+        const { rows: otherPerson } = await client.query(
+          `SELECT id, nome FROM funcionarios_clientes
+           WHERE user_id = $1 AND id <> $2 LIMIT 1`,
+          [userId, person_id]
+        );
+        if (otherPerson.length > 0) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: `Este e-mail já está vinculado a outra pessoa (${otherPerson[0].nome}).`,
+          });
+        }
+
+        const passwordHash = await bcrypt.hash(password, 12);
+        await client.query(
+          `UPDATE users SET password_hash = $1, email_confirmed = true WHERE id = $2`,
+          [passwordHash, userId]
+        );
+      } else {
+        const passwordHash = await bcrypt.hash(password, 12);
+        const { rows: newUserRows } = await client.query(
+          `INSERT INTO users (email, password_hash, email_confirmed, raw_user_meta_data)
+           VALUES ($1, $2, true, $3) RETURNING id`,
+          [emailNorm, passwordHash, JSON.stringify({ full_name: person.nome || "" })]
+        );
+        userId = newUserRows[0].id;
+      }
+    }
+
+    const { rows: profileRows } = await client.query(
+      `SELECT user_id FROM profiles WHERE user_id = $1`,
+      [userId]
     );
+    if (profileRows.length > 0) {
+      await client.query(
+        `UPDATE profiles
+         SET company_id = COALESCE($2, company_id),
+             full_name = COALESCE(NULLIF($3, ''), full_name),
+             password_changed = false,
+             updated_at = NOW()
+         WHERE user_id = $1`,
+        [userId, person.company_id, person.nome || ""]
+      );
+    } else {
+      await client.query(
+        `INSERT INTO profiles (user_id, full_name, company_id, role, password_changed)
+         VALUES ($1, $2, $3, 'user', false)`,
+        [userId, person.nome || "", person.company_id]
+      );
+    }
 
     await client.query(
-      `UPDATE funcionarios_clientes SET user_id = $1 WHERE id = $2`,
-      [userId, person_id]
+      `UPDATE funcionarios_clientes SET user_id = $1, email = $2, updated_at = NOW() WHERE id = $3`,
+      [userId, emailNorm, person_id]
     );
 
     await client.query("COMMIT");
 
     const notifications: any[] = [];
-    // TODO: implement actual WhatsApp/email notifications
     if (send_whatsapp) notifications.push({ channel: "whatsapp", success: false, reason: "not_configured" });
     if (send_email) notifications.push({ channel: "email", success: false, reason: "not_configured" });
 
-    res.json({ message: `Acesso criado para ${email}`, notifications });
+    const action = reusedExistingUser ? "atualizado" : "criado";
+    res.json({
+      message: `Acesso ${action} para ${emailNorm}`,
+      user_id: userId,
+      notifications,
+    });
   } catch (err: any) {
     await client.query("ROLLBACK");
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "Este e-mail já está cadastrado no sistema." });
+    }
     res.status(400).json({ error: err.message });
   } finally {
     client.release();

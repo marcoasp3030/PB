@@ -5,6 +5,7 @@
  */
 import { Router, Request, Response } from "express";
 import { pool } from "../config/database";
+import { excluirArmario } from "../services/locker.service";
 
 const router = Router();
 
@@ -226,6 +227,30 @@ router.delete("/:table", async (req: Request, res: Response) => {
   const { table } = req.params;
   if (!ALLOWED_TABLES.includes(table)) {
     return res.status(400).json({ error: `Table ${table} not allowed` });
+  }
+
+  // Frontend usa supabase.from("lockers").delete().eq("id", ...) → compat
+  if (table === "lockers") {
+    const lockerId = req.query.id as string | undefined;
+    if (!lockerId) {
+      return res.status(400).json({ error: "Informe o id do armário para excluir." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const excluido = await excluirArmario(client, lockerId);
+      await client.query("COMMIT");
+      if (!excluido) {
+        return res.status(404).json({ error: "Armário não encontrado" });
+      }
+      return res.json([{ id: lockerId }]);
+    } catch (err: any) {
+      await client.query("ROLLBACK");
+      return res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
   }
 
   try {

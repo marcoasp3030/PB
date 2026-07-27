@@ -12,6 +12,16 @@ dist
 dist-ssr
 *.local
 
+# Segredos / credenciais de produção
+.env
+.env.*
+!.env.docker
+!backend/.env.example
+!install/.env.docker
+CREDENCIAIS_MIGRACAO.md
+backup-pblocker-*
+uploads-pblocker-*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

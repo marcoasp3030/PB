@@ -28,6 +28,16 @@ interface AppFeatures {
   branding_personalizado: boolean;
 }
 
+/** URL pública da rota mobile (respeita VITE_API_URL ou o host atual). */
+function obterUrlBaseMobile(): string {
+  const envApi = String(import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+  if (envApi) return `${envApi}/mobile`;
+  if (typeof window !== "undefined") {
+    return `${window.location.origin.replace(/\/+$/, "")}/api/mobile`;
+  }
+  return "/api/mobile";
+}
+
 const DEFAULT_FEATURES: AppFeatures = {
   abrir_fechadura: true,
   historico_comandos: true,
@@ -292,12 +302,12 @@ export default function ConfigAppMobile() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2 bg-muted/50 rounded-lg p-3 font-mono text-sm">
-                <span className="flex-1 text-foreground">https://pblocker.sistembr.com.br/api/mobile</span>
+                <span className="flex-1 text-foreground break-all">{obterUrlBaseMobile()}</span>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8"
-                  onClick={() => copyToClipboard("https://pblocker.sistembr.com.br/api/mobile", "url")}
+                  onClick={() => copyToClipboard(obterUrlBaseMobile(), "url")}
                 >
                   {copied === "url" ? <CheckCircle2 className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
                 </Button>

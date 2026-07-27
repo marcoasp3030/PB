@@ -3,6 +3,7 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
+import { excluirArmario } from "../services/locker.service";
 
 const router = Router();
 
@@ -137,11 +138,10 @@ router.delete("/:id", requireAdminOrAbove, async (req: Request, res: Response) =
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`DELETE FROM locker_doors WHERE locker_id = $1`, [req.params.id]);
-    const { rows } = await client.query(`DELETE FROM lockers WHERE id = $1 RETURNING id`, [req.params.id]);
+    const excluido = await excluirArmario(client, req.params.id);
     await client.query("COMMIT");
 
-    if (!rows[0]) return res.status(404).json({ error: "Armário não encontrado" });
+    if (!excluido) return res.status(404).json({ error: "Armário não encontrado" });
     res.json({ message: "Armário excluído com sucesso" });
   } catch (err: any) {
     await client.query("ROLLBACK");

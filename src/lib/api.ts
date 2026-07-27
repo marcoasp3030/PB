@@ -21,7 +21,8 @@ const resolveApiBaseUrl = () => {
   // No preview do Lovable, o proxy do Vite não funciona — usar URL absoluta
   const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
   if (!isLocalhost) {
-    return "https://pblocker.sistembr.com.br/api";
+    // Produção sem VITE_API_URL: mesma origem (Nginx repassa /api ao backend)
+    return `${window.location.origin.replace(/\/+$/, "")}/api`;
   }
 
   return "/api";
@@ -55,11 +56,18 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Token expirado ou inválido → redireciona para login
+    // Token JWT expirado/inválido → redireciona para login.
+    // NÃO deslogar em 401 de endpoints IoT (API Key): mensagem fala de X-API-Key
+    // e o admin pode estar só sem chave no header — isso não invalida a sessão.
     if (error.response?.status === 401) {
+      const apiError = String(error.response?.data?.error || "");
+      const isApiKeyAuthError =
+        /api key/i.test(apiError) ||
+        /x-api-key/i.test(apiError) ||
+        /endpoints iot/i.test(apiError);
+
       const currentPath = window.location.pathname;
-      // Evita loop de redirecionamento na página de auth
-      if (currentPath !== "/auth") {
+      if (!isApiKeyAuthError && currentPath !== "/auth") {
         localStorage.removeItem("auth_token");
         window.location.href = "/auth";
       }

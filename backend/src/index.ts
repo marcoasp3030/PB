@@ -51,12 +51,18 @@ app.use(cors({
     // Permite requisições sem Origin (health checks, curl, server-to-server)
     if (!origin) return callback(null, true);
 
-    const staticAllowed = new Set([
+    const staticAllowed = new Set<string>([
       process.env.FRONTEND_URL || "http://localhost:5173",
       "http://localhost:5173",
       "http://127.0.0.1:5173",
-      "https://pblocker.sistembr.com.br",
     ]);
+
+    const extras = process.env.CORS_ORIGENS_ADICIONAIS || "";
+    extras
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean)
+      .forEach((o) => staticAllowed.add(o));
 
     const isLovableOrigin = /^https:\/\/[\w-]+\.lovable\.app$/i.test(origin)
       || /^https:\/\/[\w-]+\.lovableproject\.com$/i.test(origin);

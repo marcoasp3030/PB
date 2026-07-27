@@ -9,6 +9,7 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY docker/00-forwarded-proto-map.conf /etc/nginx/conf.d/00-forwarded-proto-map.conf
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

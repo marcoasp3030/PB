@@ -40,8 +40,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:-troque-este-segredo-em-producao}
       JWT_EXPIRES_IN: 7d
       PORT: 3001
-      FRONTEND_URL: https://pblocker.sistembr.com.br
-      API_URL: https://pblocker.sistembr.com.br/api
+      # URLs públicas (CORS e links); sobrescreva no .env do servidor
+      FRONTEND_URL: ${FRONTEND_URL:-https://pbonelocker.com.br}
+      API_URL: ${API_URL:-https://pbonelocker.com.br/api}
+      # Origens extras para CORS, separadas por vírgula (ex.: https://www.pbonelocker.com.br)
+      CORS_ORIGENS_ADICIONAIS: ${CORS_ORIGENS_ADICIONAIS:-}
       UPLOAD_DIR: ./uploads
       MAX_FILE_SIZE: 5242880
       PROJECT_ROOT: /workspace
@@ -61,13 +64,14 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: https://pblocker.sistembr.com.br/api
+        VITE_API_URL: ${VITE_API_URL:-https://pbonelocker.com.br/api}
     container_name: pblocker-web
     restart: unless-stopped
     depends_on:
       - backend
+    # Só localhost: o HTTPS fica no Nginx do host — não disputa 80/443 com outros serviços
     ports:
-      - "8080:80"
+      - "${HOST_BIND_FRONTEND:-127.0.0.1}:8082:80"
 
   # ==========================================
   # Traefik (SSL automático) — opcional

@@ -430,14 +430,14 @@ export default function LockersPage() {
   const handleDeleteLocker = async () => {
     if (!deleteLocker) return;
     setActionLoading(true);
-    const { error } = await supabase.from("lockers").delete().eq("id", deleteLocker.id);
-
-    if (error) {
-      toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" });
-    } else {
+    try {
+      await api.delete(`/lockers/${deleteLocker.id}`);
       toast({ title: "Excluído!", description: `${deleteLocker.name} removido.` });
       setDeleteLocker(null);
       fetchLockers();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || "Erro ao excluir armário";
+      toast({ title: "Erro ao excluir", description: msg, variant: "destructive" });
     }
     setActionLoading(false);
   };

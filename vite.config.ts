@@ -13,14 +13,12 @@ export default defineConfig(({ mode }) => ({
     },
     proxy: {
       "/api": {
-        target: "https://pblocker.sistembr.com.br",
+        target: "http://127.0.0.1:3001",
         changeOrigin: true,
-        secure: true,
       },
       "/uploads": {
-        target: "https://pblocker.sistembr.com.br",
+        target: "http://127.0.0.1:3001",
         changeOrigin: true,
-        secure: true,
       },
     },
   },

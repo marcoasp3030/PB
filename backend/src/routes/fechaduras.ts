@@ -311,6 +311,40 @@ router.post("/emergencia", authMiddleware, async (req: Request, res: Response) =
   }
 });
 
+// ============================================
+// GET /api/fechaduras/agent-status  (JWT — painel Configurações → Fechaduras)
+// Deve ficar ANTES do apiKeyMiddleware: o frontend envia Bearer JWT, não X-API-Key.
+// Se ficar atrás da API Key, o 401 faz o interceptor do browser deslogar o admin.
+// ============================================
+router.get("/agent-status", authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT value, updated_at FROM platform_settings WHERE key = 'agent_last_heartbeat'`
+    );
+
+    if (!rows[0]) {
+      return res.json({ online: false, last_seen: null, message: "Agente nunca conectou." });
+    }
+
+    const lastSeen = new Date(rows[0].value?.replace?.(/"/g, "") || rows[0].updated_at);
+    const diffMs = Date.now() - lastSeen.getTime();
+    const diffSeconds = Math.floor(diffMs / 1000);
+    const online = diffSeconds < 30; // Considera online se fez polling nos últimos 30s
+
+    res.json({
+      online,
+      last_seen: lastSeen.toISOString(),
+      seconds_ago: diffSeconds,
+      message: online
+        ? "Agente online e consumindo comandos."
+        : `Agente offline há ${diffSeconds > 60 ? Math.floor(diffSeconds / 60) + " minuto(s)" : diffSeconds + " segundo(s)"}.`,
+    });
+  } catch (err: any) {
+    console.error("[FECHADURAS] Erro ao consultar status do agente:", err);
+    res.status(500).json({ online: false, error: "Erro ao consultar status" });
+  }
+});
+
 // Demais rotas de fechaduras passam pelo middleware de API Key (agente IoT)
 router.use(apiKeyMiddleware);
 
@@ -439,38 +473,6 @@ router.get("/comandos", async (_req: Request, res: Response) => {
   } catch (err: any) {
     console.error("[FECHADURAS] Erro ao buscar comando:", err);
     res.status(500).json({ error: "Erro ao buscar comando pendente" });
-  }
-});
-
-// ============================================
-// GET /api/fechaduras/agent-status  (público via API Key — status do agente)
-// ============================================
-router.get("/agent-status", async (_req: Request, res: Response) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT value, updated_at FROM platform_settings WHERE key = 'agent_last_heartbeat'`
-    );
-
-    if (!rows[0]) {
-      return res.json({ online: false, last_seen: null, message: "Agente nunca conectou." });
-    }
-
-    const lastSeen = new Date(rows[0].value?.replace?.(/"/g, "") || rows[0].updated_at);
-    const diffMs = Date.now() - lastSeen.getTime();
-    const diffSeconds = Math.floor(diffMs / 1000);
-    const online = diffSeconds < 30; // Considera online se fez polling nos últimos 30s
-
-    res.json({
-      online,
-      last_seen: lastSeen.toISOString(),
-      seconds_ago: diffSeconds,
-      message: online
-        ? "Agente online e consumindo comandos."
-        : `Agente offline há ${diffSeconds > 60 ? Math.floor(diffSeconds / 60) + " minuto(s)" : diffSeconds + " segundo(s)"}.`,
-    });
-  } catch (err: any) {
-    console.error("[FECHADURAS] Erro ao consultar status do agente:", err);
-    res.status(500).json({ online: false, error: "Erro ao consultar status" });
   }
 });
 

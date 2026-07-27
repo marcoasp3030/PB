@@ -343,7 +343,9 @@ export default function ConfigFechaduras() {
             <CardTitle className="text-lg">Autenticação por API Key</CardTitle>
           </div>
           <CardDescription>
-            Configure uma chave de acesso para proteger os endpoints de fechaduras. Sem chave configurada, o acesso é livre.
+            Configure uma chave de acesso para proteger os endpoints do agente Python. Sem chave, o acesso é livre.
+            Ao gerar e ativar uma nova chave, atualize imediatamente o agente com o header{" "}
+            <code className="text-xs">X-API-Key</code> — senão as aberturas param de funcionar.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
