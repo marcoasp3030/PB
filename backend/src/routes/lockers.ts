@@ -3,9 +3,15 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
+import { tenantParam, bodyRefsGuard } from "../services/tenant";
 import { excluirArmario } from "../services/locker.service";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("id", tenantParam("lockers", "Armário não encontrado"));
+router.param("doorId", tenantParam("locker_doors", "Porta não encontrada"));
+
 
 function companyFilter(user: Request["user"]): { clause: string; params: any[] } {
   if (user!.role === "superadmin") return { clause: "", params: [] };
@@ -173,7 +179,7 @@ router.get("/:id/doors", async (req: Request, res: Response) => {
 // ============================================
 // PUT /api/lockers/doors/:doorId
 // ============================================
-router.put("/doors/:doorId", requireAdminOrAbove, async (req: Request, res: Response) => {
+router.put("/doors/:doorId", requireAdminOrAbove, bodyRefsGuard, async (req: Request, res: Response) => {
   try {
     const { status, occupied_by_person, usage_type, expires_at, label, size } = req.body;
 

@@ -215,7 +215,7 @@ export default function DetalhePortaPainel({ door, open, onOpenChange, onReserve
     if (!door?.lock_id) return;
     setOpeningLock(true);
     try {
-      const res = await api.post("/fechaduras/abrir-admin", { lock_id: door.lock_id, origem: "painel" });
+      const res = await api.post("/fechaduras/abrir-admin", { door_id: door.id, origem: "painel" });
       toast({ title: "🔓 Comando enviado!", description: `Abrindo fechadura #${door.lock_id} — Comando #${res.data.id}` });
     } catch (err: any) {
       toast({ title: "Erro ao abrir fechadura", description: err.message || "Falha na comunicação com a API", variant: "destructive" });

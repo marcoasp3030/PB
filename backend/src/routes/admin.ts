@@ -1,11 +1,18 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
-import { requireSuperAdmin } from "../middleware/permissions";
+import { requireSuperAdmin, requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
-import { createUserWithCompany, resetPassword } from "../services/auth.service";
+import { whatsappWebhookUrl } from "../services/whatsapp-webhook.service";
+import { tenantParam, companyIdParam, isSuper } from "../services/tenant";
+import { createUserWithCompany, resetPassword, revokeSessions } from "../services/auth.service";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("companyId", companyIdParam);
+router.param("id", tenantParam("company_notification_templates", "Template não encontrado"));
+
 
 // ============================================
 // POST /api/admin/users - Create company user (superadmin)
@@ -79,6 +86,9 @@ router.put("/users/:userId/role", requireSuperAdmin, async (req: Request, res: R
 
     if (!rows[0]) return res.status(404).json({ error: "Usuário não encontrado" });
 
+    // Papel mudou: sessões antigas (com o papel anterior) deixam de valer
+    await revokeSessions(req.params.userId);
+
     await pool.query(
       `INSERT INTO audit_logs (user_id, action, resource_type, category, details)
        VALUES ($1, 'permission_change', 'profile', 'admin', $2)`,
@@ -117,7 +127,7 @@ router.put("/users/:userId/reset-password", requireSuperAdmin, async (req: Reque
 // ============================================
 // GET /api/admin/profiles
 // ============================================
-router.get("/profiles", async (req: Request, res: Response) => {
+router.get("/profiles", requireAdminOrAbove, async (req: Request, res: Response) => {
   try {
     if (req.user!.role === "superadmin") {
       const { rows } = await pool.query(
@@ -148,11 +158,15 @@ router.put("/profiles/:userId", async (req: Request, res: Response) => {
 
   try {
     const { full_name, avatar_url } = req.body;
+    // Admin só edita perfis da própria empresa
+    const scoped = !isSuper(req.user) && req.params.userId !== req.user!.user_id;
     const { rows } = await pool.query(
       `UPDATE profiles SET full_name = COALESCE($2, full_name),
        avatar_url = COALESCE($3, avatar_url), updated_at = NOW()
-       WHERE user_id = $1 RETURNING *`,
-      [req.params.userId, full_name, avatar_url]
+       WHERE user_id = $1 ${scoped ? "AND company_id = $4" : ""} RETURNING *`,
+      scoped
+        ? [req.params.userId, full_name, avatar_url, req.user!.company_id]
+        : [req.params.userId, full_name, avatar_url]
     );
 
     if (!rows[0]) return res.status(404).json({ error: "Perfil não encontrado" });
@@ -163,15 +177,38 @@ router.put("/profiles/:userId", async (req: Request, res: Response) => {
 });
 
 // ============================================
+// GET /api/admin/whatsapp-webhook-global (superadmin)
+// URL única para o webhook global da UAZAPI; a empresa é identificada pela instância do payload.
+// ============================================
+router.get("/whatsapp-webhook-global", requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT value FROM platform_settings WHERE key = 'whatsapp_webhook_secret' LIMIT 1`
+    );
+    const secret = typeof rows[0]?.value === "string" ? rows[0].value : null;
+    res.json({ webhook_url: secret ? whatsappWebhookUrl(secret) : null });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // WhatsApp config per company
 // ============================================
-router.get("/whatsapp/:companyId", async (req: Request, res: Response) => {
+router.get("/whatsapp/:companyId", requireAdminOrAbove, async (req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
       `SELECT * FROM company_whatsapp WHERE company_id = $1`,
       [req.params.companyId]
     );
-    res.json(rows[0] || null);
+    if (!rows[0]) return res.json(null);
+    // Segredos nunca saem inteiros pela API
+    const { instance_token, webhook_secret, ...rest } = rows[0];
+    res.json({
+      ...rest,
+      instance_token: instance_token ? `${String(instance_token).slice(0, 4)}••••` : null,
+      webhook_url: webhook_secret ? whatsappWebhookUrl(webhook_secret) : null,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -203,7 +240,7 @@ router.put("/whatsapp/:companyId", requireSuperAdmin, async (req: Request, res: 
 // ============================================
 // Notification templates
 // ============================================
-router.get("/templates/:companyId", async (req: Request, res: Response) => {
+router.get("/templates/:companyId", requireAdminOrAbove, async (req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
       `SELECT * FROM company_notification_templates WHERE company_id = $1 ORDER BY type`,
@@ -215,7 +252,7 @@ router.get("/templates/:companyId", async (req: Request, res: Response) => {
   }
 });
 
-router.put("/templates/:id", async (req: Request, res: Response) => {
+router.put("/templates/:id", requireAdminOrAbove, async (req: Request, res: Response) => {
   try {
     const { template_text, footer, active } = req.body;
     const { rows } = await pool.query(

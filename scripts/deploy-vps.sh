@@ -412,7 +412,7 @@ server {
     }
 
     # API Backend (proxy reverso para Express)
-    location /api/ {
+    location ^~ /api/ {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
@@ -427,7 +427,7 @@ server {
     }
 
     # Webhooks (sem timeout estendido)
-    location /api/webhooks/ {
+    location ^~ /api/webhooks/ {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -437,7 +437,7 @@ server {
     }
 
     # Uploads (arquivos estáticos)
-    location /uploads/ {
+    location ^~ /uploads/ {
         alias $PROJECT_DIR/backend/uploads/;
         expires 30d;
         add_header Cache-Control "public, immutable";

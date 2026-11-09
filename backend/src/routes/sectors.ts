@@ -3,8 +3,13 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
+import { tenantParam, bodyRefsGuard } from "../services/tenant";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("id", tenantParam("setores", "Setor não encontrado"));
+
 
 // ============================================
 // GET /api/sectors
@@ -46,7 +51,7 @@ const createSchema = z.object({
   descricao: z.string().max(500).default(""),
 });
 
-router.post("/", requireAdminOrAbove, validate(createSchema), async (req: Request, res: Response) => {
+router.post("/", requireAdminOrAbove, validate(createSchema), bodyRefsGuard, async (req: Request, res: Response) => {
   const { company_id, departamento_id, nome, descricao } = req.body;
 
   if (req.user!.role !== "superadmin" && company_id !== req.user!.company_id) {
@@ -68,7 +73,7 @@ router.post("/", requireAdminOrAbove, validate(createSchema), async (req: Reques
 // ============================================
 // PUT /api/sectors/:id
 // ============================================
-router.put("/:id", requireAdminOrAbove, async (req: Request, res: Response) => {
+router.put("/:id", requireAdminOrAbove, bodyRefsGuard, async (req: Request, res: Response) => {
   try {
     const { nome, descricao, ativo, departamento_id } = req.body;
     const { rows } = await pool.query(

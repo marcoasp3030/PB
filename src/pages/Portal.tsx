@@ -328,7 +328,7 @@ export default function Portal() {
     }
     setOpeningLockId(door.id);
     try {
-      const res = await api.post("/fechaduras/abrir-portal", { lock_id: door.lock_id, origem: "portal" });
+      const res = await api.post("/fechaduras/abrir-portal", { door_id: door.id, origem: "portal" });
       const data = res.data?.data || res.data;
       if (data?.success) {
         toast.success(`Comando de abertura enviado para ${door.label || "Porta " + door.door_number}`);

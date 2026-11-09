@@ -1,14 +1,32 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../config/database";
+import { companyIdParam, isSuper } from "../services/tenant";
 import { requireSuperAdmin } from "../middleware/permissions";
 
 const router = Router();
 
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("companyId", companyIdParam);
+
+
 // ============================================
 // GET /api/settings
 // ============================================
+// Nunca expostas a não-superadmin (credenciais globais da plataforma)
+const SECRET_SETTINGS = ["fechaduras_api_key", "smtp_config", "uazapi_admin_token", "uazapi_server_url", "whatsapp_webhook_secret"];
+
 router.get("/", async (req: Request, res: Response) => {
   try {
+    if (!isSuper(req.user)) {
+      // Chaves por empresa (sufixo UUID) só da própria empresa
+      const { rows } = await pool.query(
+        `SELECT key, value FROM platform_settings
+         WHERE key <> ALL($1::text[])
+           AND (key !~* '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR key LIKE '%' || $2)`,
+        [SECRET_SETTINGS, req.user!.company_id]
+      );
+      return res.json(rows);
+    }
     const { rows } = await pool.query(`SELECT key, value FROM platform_settings`);
     res.json(rows);
   } catch (err: any) {

@@ -87,7 +87,12 @@ export async function authenticateUser(
   password: string
 ): Promise<{ token: string; user: AuthUser }> {
   const { rows } = await pool.query(
-    `SELECT id, email, password_hash FROM users WHERE email = $1`,
+    `SELECT u.id, u.email, u.password_hash, u.token_version,
+            p.role, c.active AS company_active
+       FROM users u
+       LEFT JOIN profiles p ON p.user_id = u.id
+       LEFT JOIN companies c ON c.id = p.company_id
+      WHERE u.email = $1`,
     [email.toLowerCase().trim()]
   );
 
@@ -96,12 +101,12 @@ export async function authenticateUser(
   const valid = await bcrypt.compare(password, rows[0].password_hash);
   if (!valid) throw new Error("Credenciais inválidas");
 
-  const token = jwt.sign(
-    { sub: rows[0].id, email: rows[0].email },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
-  );
+  // Empresa suspensa: ninguém dela entra (exceto superadmin da plataforma)
+  if (rows[0].role !== "superadmin" && rows[0].company_active === false) {
+    throw new CompanySuspendedError();
+  }
 
+  const token = generateToken(rows[0].id, rows[0].email, rows[0].token_version ?? 0);
   return { token, user: { id: rows[0].id, email: rows[0].email } };
 }
 
@@ -121,10 +126,11 @@ export async function changePassword(
   if (!valid) throw new Error("Senha atual incorreta");
 
   const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-  await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [
-    newHash,
-    userId,
-  ]);
+  // Troca a senha e encerra todas as sessões abertas (token_version + 1)
+  await pool.query(
+    `UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE id = $2`,
+    [newHash, userId]
+  );
 
   await pool.query(
     `UPDATE profiles SET password_changed = true WHERE user_id = $1`,
@@ -137,14 +143,34 @@ export async function resetPassword(
   newPassword: string
 ): Promise<void> {
   const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-  await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [
-    newHash,
-    userId,
-  ]);
+  // Redefinição de senha encerra todas as sessões abertas
+  await pool.query(
+    `UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE id = $2`,
+    [newHash, userId]
+  );
 }
 
-export function generateToken(userId: string, email: string): string {
-  return jwt.sign({ sub: userId, email }, JWT_SECRET, {
+/** Encerra todas as sessões (JWT) do usuário — usado ao trocar papel, senha etc. */
+export async function revokeSessions(userId: string): Promise<void> {
+  await pool.query(`UPDATE users SET token_version = token_version + 1 WHERE id = $1`, [userId]);
+}
+
+/** Novo token com a versão atual (após trocar a própria senha, por exemplo). */
+export async function issueTokenForUser(userId: string): Promise<string> {
+  const { rows } = await pool.query(`SELECT email, token_version FROM users WHERE id = $1`, [userId]);
+  if (!rows[0]) throw new Error("Usuário não encontrado");
+  return generateToken(userId, rows[0].email, rows[0].token_version ?? 0);
+}
+
+export class CompanySuspendedError extends Error {
+  constructor() {
+    super("Empresa suspensa. Entre em contato com o administrador da plataforma.");
+  }
+}
+
+/** `tv` = token_version: tokens com versão antiga deixam de valer. */
+export function generateToken(userId: string, email: string, tokenVersion = 0): string {
+  return jwt.sign({ sub: userId, email, tv: tokenVersion }, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN,
   } as jwt.SignOptions);
 }

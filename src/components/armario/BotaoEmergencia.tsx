@@ -18,8 +18,8 @@ import api from "@/lib/api";
 interface BotaoEmergenciaProps {
   /** company_id para filtrar (opcional) */
   companyId?: string;
-  /** lock_ids já carregados na tela para fallback compatível com VPS legada */
-  lockIds?: number[];
+  /** IDs das portas com fechadura (fallback: abre porta a porta, sempre a porta exata) */
+  doorIds?: string[];
   /** Callback após sucesso */
   onSuccess?: () => void;
   className?: string;
@@ -116,35 +116,34 @@ const postCommand = async (
   return (responseBody || {}) as EmergencyCommandResponse;
 };
 
-const enqueueAdminFallback = async (lockIds: number[]) => {
-  const uniqueLockIds = [...new Set(lockIds.filter((lockId): lockId is number => Number.isInteger(lockId) && lockId > 0))];
+const enqueueAdminFallback = async (doorIds: string[]) => {
+  const uniqueDoorIds = [...new Set(doorIds.filter(Boolean))];
 
-  if (!uniqueLockIds.length) {
-    throw new Error("Nenhuma fechadura com lock_id configurado foi encontrada para a abertura de emergência.");
+  if (!uniqueDoorIds.length) {
+    throw new Error("Nenhuma porta com fechadura configurada foi encontrada para a abertura de emergência.");
   }
 
   let sent = 0;
   const errors: string[] = [];
   const chunkSize = 10;
 
-  for (let index = 0; index < uniqueLockIds.length; index += chunkSize) {
-    const chunk = uniqueLockIds.slice(index, index + chunkSize);
+  for (let index = 0; index < uniqueDoorIds.length; index += chunkSize) {
+    const chunk = uniqueDoorIds.slice(index, index + chunkSize);
     const results = await Promise.allSettled(
-      chunk.map((lockId) =>
+      chunk.map((doorId) =>
         postCommand("/fechaduras/abrir-admin", {
-          lock_id: lockId,
+          door_id: doorId,
           origem: "emergencia",
         })
       )
     );
 
-    results.forEach((result, resultIndex) => {
+    results.forEach((result) => {
       if (result.status === "fulfilled") {
         sent += 1;
         return;
       }
-
-      errors.push(`Lock ${chunk[resultIndex]}: ${result.reason?.message || "erro desconhecido"}`);
+      errors.push(result.reason?.message || "erro desconhecido");
     });
   }
 
@@ -155,16 +154,16 @@ const enqueueAdminFallback = async (lockIds: number[]) => {
   return {
     success: errors.length === 0,
     message: errors.length
-      ? `Fallback enviado para ${sent} de ${uniqueLockIds.length} fechadura(s).`
-      : `Fallback enviado para ${uniqueLockIds.length} fechadura(s).`,
+      ? `Fallback enviado para ${sent} de ${uniqueDoorIds.length} porta(s).`
+      : `Fallback enviado para ${uniqueDoorIds.length} porta(s).`,
     sent,
     failed: errors.length,
-    total: uniqueLockIds.length,
+    total: uniqueDoorIds.length,
     fallback: "abrir-admin" as const,
   } satisfies EmergencyCommandResponse;
 };
 
-export function BotaoEmergencia({ companyId, lockIds = [], onSuccess, className }: BotaoEmergenciaProps) {
+export function BotaoEmergencia({ companyId, doorIds = [], onSuccess, className }: BotaoEmergenciaProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -203,7 +202,7 @@ export function BotaoEmergencia({ companyId, lockIds = [], onSuccess, className 
 
       if (!data) {
         try {
-          data = await enqueueAdminFallback(lockIds);
+          data = await enqueueAdminFallback(doorIds);
         } catch (fallbackError) {
           throw fallbackError instanceof Error ? fallbackError : lastError;
         }

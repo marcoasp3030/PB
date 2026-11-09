@@ -8,6 +8,8 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "@/hooks/use-toast";
 import { Lock, Send, RefreshCw, CheckCircle, Copy, Key, Eye, EyeOff, ShieldCheck, ShieldAlert, Wifi, WifiOff } from "lucide-react";
 import api from "@/lib/api";
+import { useCompany } from "@/contexts/ContextoEmpresa";
+import ChavesAgenteEmpresa from "./ChavesAgenteEmpresa";
 
 interface Comando {
   id: number;
@@ -72,6 +74,7 @@ function generateApiKey(): string {
 }
 
 export default function ConfigFechaduras() {
+  const { isSuperAdmin } = useCompany();
   const [lockId, setLockId] = useState("1");
   const [origem, setOrigem] = useState("web");
   const [loading, setLoading] = useState(false);
@@ -156,7 +159,7 @@ export default function ConfigFechaduras() {
       setKeyEnabled(!!key);
       toast({
         title: key ? "API Key salva!" : "API Key removida",
-        description: key ? "Os endpoints agora exigem autenticação." : "Os endpoints estão em modo aberto.",
+        description: key ? "O agente global deve usar esta chave." : "Somente agentes com chave de empresa continuarão funcionando.",
       });
     } catch (err: any) {
       toast({ title: "Erro ao salvar", description: err.message || "Falha ao salvar API Key", variant: "destructive" });
@@ -296,7 +299,7 @@ export default function ConfigFechaduras() {
                 ) : (
                   <>
                     <ShieldAlert className="h-4 w-4 text-amber-500" />
-                    <span className="text-sm text-amber-600 font-medium">Modo aberto</span>
+                    <span className="text-sm text-amber-600 font-medium">{isSuperAdmin ? "Sem chave global" : "Chave por empresa"}</span>
                   </>
                 )}
               </div>
@@ -336,16 +339,19 @@ export default function ConfigFechaduras() {
         </CardContent>
       </Card>
 
+      <ChavesAgenteEmpresa />
+
+      {isSuperAdmin && (
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
             <Key className="h-5 w-5 text-primary" />
-            <CardTitle className="text-lg">Autenticação por API Key</CardTitle>
+            <CardTitle className="text-lg">Chave global da plataforma (legado)</CardTitle>
           </div>
           <CardDescription>
-            Configure uma chave de acesso para proteger os endpoints do agente Python. Sem chave, o acesso é livre.
-            Ao gerar e ativar uma nova chave, atualize imediatamente o agente com o header{" "}
-            <code className="text-xs">X-API-Key</code> — senão as aberturas param de funcionar.
+            Chave do agente global, que atende as empresas sem agente próprio. A API sempre exige uma chave:
+            sem chave global, só funcionam agentes com chave de empresa. Ao trocar a chave, atualize o agente
+            (header <code className="text-xs">X-API-Key</code>), senão as aberturas param de funcionar.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -381,7 +387,7 @@ export default function ConfigFechaduras() {
 requests.get(url, headers=headers)`}
                   </pre>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Também aceita: <code className="bg-muted px-1 rounded">Authorization: Bearer &lt;key&gt;</code> ou <code className="bg-muted px-1 rounded">?api_key=&lt;key&gt;</code>
+                    Também aceita: <code className="bg-muted px-1 rounded">?api_key=&lt;key&gt;</code>
                   </p>
                 </div>
               )}
@@ -431,6 +437,7 @@ requests.get(url, headers=headers)`}
           )}
         </CardContent>
       </Card>
+      )}
 
       <Card>
         <CardHeader>

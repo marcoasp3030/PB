@@ -54,8 +54,20 @@ api.interceptors.request.use(
 // Interceptor de Response: trata erros globais
 // ============================================
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Trocar a senha encerra as sessões antigas; o servidor devolve um token novo para esta
+    if (response.config?.url?.includes("/auth/change-password") && response.data?.token) {
+      localStorage.setItem("auth_token", response.data.token);
+    }
+    return response;
+  },
   (error) => {
+    // Empresa suspensa: encerra a sessão e volta ao login
+    if (error.response?.status === 403 && error.response?.data?.code === "company_suspended") {
+      localStorage.removeItem("auth_token");
+      if (window.location.pathname !== "/auth") window.location.href = "/auth";
+    }
+
     // Token JWT expirado/inválido → redireciona para login.
     // NÃO deslogar em 401 de endpoints IoT (API Key): mensagem fala de X-API-Key
     // e o admin pode estar só sem chave no header — isso não invalida a sessão.

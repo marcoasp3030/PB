@@ -4,6 +4,7 @@
  */
 import { Router, Request, Response } from "express";
 import { pool } from "../config/database";
+import { isAdminOrAbove, rowInTenant } from "../services/tenant";
 import bcrypt from "bcryptjs";
 import axios from "axios";
 const router = Router();
@@ -55,6 +56,12 @@ router.post("/create-person-login", async (req: Request, res: Response) => {
   if (!person_id || !email || !password) {
     return res.status(400).json({ error: "Dados obrigatórios ausentes" });
   }
+  if (!isAdminOrAbove(req.user)) {
+    return res.status(403).json({ error: "Acesso restrito a administradores" });
+  }
+  if (!(await rowInTenant("funcionarios_clientes", person_id, req.user!))) {
+    return res.status(404).json({ error: "Pessoa não encontrada" });
+  }
 
   const emailNorm = String(email).toLowerCase().trim();
   const client = await pool.connect();
@@ -80,7 +87,7 @@ router.post("/create-person-login", async (req: Request, res: Response) => {
       reusedExistingUser = true;
       const passwordHash = await bcrypt.hash(password, 12);
       await client.query(
-        `UPDATE users SET password_hash = $1, email_confirmed = true, email = $2 WHERE id = $3`,
+        `UPDATE users SET password_hash = $1, email_confirmed = true, token_version = token_version + 1, email = $2 WHERE id = $3`,
         [passwordHash, emailNorm, userId]
       );
     } else {
@@ -92,6 +99,18 @@ router.post("/create-person-login", async (req: Request, res: Response) => {
       if (existingUsers.length > 0) {
         userId = existingUsers[0].id;
         reusedExistingUser = true;
+
+        // Só reaproveita contas de portal ("user") da mesma empresa — nunca
+        // admins/superadmins ou usuários de outra empresa (evita sequestro de conta).
+        const { rows: existingProfile } = await client.query(
+          `SELECT role, company_id FROM profiles WHERE user_id = $1`,
+          [userId]
+        );
+        const prof = existingProfile[0];
+        if (prof && (prof.role !== "user" || prof.company_id !== person.company_id)) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ error: "Este e-mail já está cadastrado no sistema." });
+        }
 
         const { rows: otherPerson } = await client.query(
           `SELECT id, nome FROM funcionarios_clientes
@@ -107,7 +126,7 @@ router.post("/create-person-login", async (req: Request, res: Response) => {
 
         const passwordHash = await bcrypt.hash(password, 12);
         await client.query(
-          `UPDATE users SET password_hash = $1, email_confirmed = true WHERE id = $2`,
+          `UPDATE users SET password_hash = $1, email_confirmed = true, token_version = token_version + 1 WHERE id = $2`,
           [passwordHash, userId]
         );
       } else {

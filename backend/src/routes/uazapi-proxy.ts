@@ -4,6 +4,24 @@
  */
 import { Router, Request, Response } from "express";
 import { pool } from "../config/database";
+import { whatsappWebhookUrl } from "../services/whatsapp-webhook.service";
+
+/** Melhor esforço: aponta o webhook da instância para a URL segura da empresa. */
+async function configureInstanceWebhook(baseUrl: string, instanceToken: string, companyId: string) {
+  try {
+    const { rows } = await pool.query(`SELECT webhook_secret FROM company_whatsapp WHERE company_id = $1`, [companyId]);
+    if (!rows[0]?.webhook_secret || !instanceToken) return false;
+    const response = await fetch(`${baseUrl}/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", token: instanceToken },
+      body: JSON.stringify({ url: whatsappWebhookUrl(rows[0].webhook_secret), enabled: true, events: ["messages"] }),
+    });
+    return response.ok;
+  } catch (e: any) {
+    console.warn("[UAZAPI] Não foi possível configurar o webhook automaticamente:", e.message);
+    return false;
+  }
+}
 
 const router = Router();
 
@@ -76,7 +94,8 @@ router.post("/", async (req: Request, res: Response) => {
         [companyId, name, instanceToken]
       );
 
-      return res.json({ success: true, data: result });
+      const webhookConfigured = await configureInstanceWebhook(baseUrl, instanceToken, companyId);
+      return res.json({ success: true, data: result, webhook_configured: webhookConfigured });
     }
 
     if (action === "get_qrcode") {
@@ -93,6 +112,15 @@ router.post("/", async (req: Request, res: Response) => {
       let data: any;
       try { data = JSON.parse(text); } catch { data = { raw: text }; }
       return res.status(response.ok ? 200 : response.status).json({ success: response.ok, data });
+    }
+
+    if (action === "configure_webhook") {
+      if (!companyWa?.instance_token) return res.status(400).json({ error: "Instância não criada para esta empresa" });
+      const ok = await configureInstanceWebhook(baseUrl, companyWa.instance_token, companyId);
+      return res.status(ok ? 200 : 502).json({
+        success: ok,
+        webhook_url: companyWa.webhook_secret ? whatsappWebhookUrl(companyWa.webhook_secret) : null,
+      });
     }
 
     if (action === "get_status") {
@@ -118,7 +146,13 @@ router.post("/", async (req: Request, res: Response) => {
         [newStatus, phoneNum, companyId]
       );
 
-      return res.json({ success: true, status: newStatus, phone_number: phoneNum, data });
+      return res.json({
+        success: true,
+        status: newStatus,
+        phone_number: phoneNum,
+        data,
+        webhook_url: companyWa.webhook_secret ? whatsappWebhookUrl(companyWa.webhook_secret) : null,
+      });
     }
 
     if (action === "disconnect") {

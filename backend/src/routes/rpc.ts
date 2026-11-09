@@ -6,11 +6,10 @@ import { pool } from "../config/database";
 
 const router = Router();
 
-const ALLOWED_FUNCTIONS = [
-  "get_login_lockout_status",
-  "register_login_attempt",
-  "get_user_role",
-];
+// Rota PÚBLICA: só funções de leitura sem efeito colateral.
+// register_login_attempt foi removida (permitia bloquear/desbloquear o login de qualquer conta;
+// o próprio /auth/login já registra as tentativas) e get_user_role (expunha o papel de usuários).
+const ALLOWED_FUNCTIONS = ["get_login_lockout_status"];
 
 // POST /api/rpc/:functionName
 router.post("/:functionName", async (req: Request, res: Response) => {

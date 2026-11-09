@@ -3,8 +3,13 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
+import { tenantParam, bodyRefsGuard } from "../services/tenant";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("id", tenantParam("renewal_requests", "Solicitação não encontrada"));
+
 
 // ============================================
 // GET /api/renewals
@@ -52,7 +57,7 @@ const createSchema = z.object({
   requested_hours: z.number().int().min(1).max(24).default(1),
 });
 
-router.post("/", validate(createSchema), async (req: Request, res: Response) => {
+router.post("/", validate(createSchema), bodyRefsGuard, async (req: Request, res: Response) => {
   try {
     const { company_id, door_id, person_id, requested_hours } = req.body;
 

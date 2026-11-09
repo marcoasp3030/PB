@@ -3,6 +3,8 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { pool } from "../config/database";
 import { authMiddleware } from "../middleware/auth";
+import { enqueueOpenCommand, resolveDoor } from "../services/fechadura.service";
+import { HttpError } from "../services/tenant";
 
 const router = Router();
 
@@ -225,36 +227,6 @@ const abrirSchema = z.object({
   }
 });
 
-async function enqueueMobileOpenCommand(lockId: number, origem: string, personId: string | null) {
-  try {
-    const { rows } = await pool.query(
-      `INSERT INTO comandos_fechadura (acao, lock_id, status, origem, person_id)
-       VALUES ('abrir', $1, 'pendente', $2, $3)
-       RETURNING id`,
-      [lockId, origem, personId]
-    );
-    return rows[0].id as number;
-  } catch (err: any) {
-    const message = String(err?.message || "");
-    const missingPersonIdColumn =
-      /column\s+"?person_id"?\s+of\s+relation\s+"?comandos_fechadura"?\s+does\s+not\s+exist/i.test(
-        message
-      );
-
-    if (missingPersonIdColumn) {
-      const { rows } = await pool.query(
-        `INSERT INTO comandos_fechadura (acao, lock_id, status, origem)
-         VALUES ('abrir', $1, 'pendente', $2)
-         RETURNING id`,
-        [lockId, origem]
-      );
-      return rows[0].id as number;
-    }
-
-    throw err;
-  }
-}
-
 router.post("/abrir", validate(abrirSchema), async (req: Request, res: Response) => {
   const requestedLockId = req.body.lock_id ?? req.body.lockId ?? null;
   const requestedDoorId = req.body.door_id ?? req.body.doorId ?? null;
@@ -264,13 +236,14 @@ router.post("/abrir", validate(abrirSchema), async (req: Request, res: Response)
     const userId = req.user?.user_id;
 
     const { rows: personRows } = await pool.query(
-      `SELECT fc.id AS person_id, ld.id AS door_id, ld.lock_id, ld.status
+      `SELECT fc.id AS person_id, fc.company_id, ld.id AS door_id, ld.lock_id, ld.status
        FROM funcionarios_clientes fc
        JOIN locker_doors ld ON ld.occupied_by_person = fc.id
+       JOIN lockers l ON l.id = ld.locker_id AND l.company_id = fc.company_id
        WHERE fc.user_id = $1
          AND (
            ($2::uuid IS NOT NULL AND ld.id = $2::uuid)
-           OR ($3::int IS NOT NULL AND ld.lock_id = $3)
+           OR ($2::uuid IS NULL AND ld.lock_id = $3)
          )
        ORDER BY CASE
          WHEN ld.status = 'occupied' THEN 0
@@ -278,7 +251,7 @@ router.post("/abrir", validate(abrirSchema), async (req: Request, res: Response)
          ELSE 2
        END,
        ld.updated_at DESC
-       LIMIT 1`,
+       LIMIT 2`,
       [userId, requestedDoorId, requestedLockId]
     );
 
@@ -291,6 +264,9 @@ router.post("/abrir", validate(abrirSchema), async (req: Request, res: Response)
     if (!door.lock_id) {
       return res.status(422).json({ success: false, error: "Esta porta ainda não possui lock_id configurado." });
     }
+    if (!requestedDoorId && personRows.length > 1) {
+      return res.status(409).json({ success: false, error: "Mais de uma porta sua usa esta fechadura. Informe door_id." });
+    }
 
     if (!["occupied", "reserved"].includes(door.status)) {
       return res.status(409).json({
@@ -299,7 +275,8 @@ router.post("/abrir", validate(abrirSchema), async (req: Request, res: Response)
       });
     }
 
-    const commandId = await enqueueMobileOpenCommand(door.lock_id, origem, door.person_id);
+    const target = await resolveDoor({ doorId: door.door_id, companyId: door.company_id });
+    const commandId = await enqueueOpenCommand(target, origem, door.person_id);
 
     console.log(
       `[MOBILE] Comando de abertura criado: cmd=#${commandId} lock_id=${door.lock_id} door=${door.door_id} person=${door.person_id} origem=${origem}`
@@ -313,6 +290,7 @@ router.post("/abrir", validate(abrirSchema), async (req: Request, res: Response)
       door_id: door.door_id,
     });
   } catch (err: any) {
+    if (err instanceof HttpError) return res.status(err.status).json({ success: false, error: err.message });
     console.error("[MOBILE] Erro ao criar comando:", err);
     res.status(500).json({ success: false, error: "Erro ao criar comando" });
   }
@@ -330,8 +308,9 @@ router.get("/comando/:id", async (req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, acao, lock_id, status, resposta, origem, criado_em, executado_em
-       FROM comandos_fechadura WHERE id = $1`,
-      [id]
+       FROM comandos_fechadura
+       WHERE id = $1 AND person_id IN (SELECT id FROM funcionarios_clientes WHERE user_id = $2)`,
+      [id, req.user?.user_id]
     );
 
     if (!rows[0]) {
@@ -354,39 +333,39 @@ router.get("/historico", async (req: Request, res: Response) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
     const offset = parseInt(req.query.offset as string) || 0;
 
-    const { rows: doors } = await pool.query(
-      `SELECT ld.lock_id FROM locker_doors ld
-       JOIN funcionarios_clientes fc ON fc.id = ld.occupied_by_person
-       WHERE fc.user_id = $1 AND ld.lock_id IS NOT NULL`,
-      [userId]
-    );
-
-    if (doors.length === 0) {
-      return res.json({ success: true, data: [], total: 0 });
-    }
-
-    const lockIds = doors.map(d => d.lock_id);
-    const placeholders = lockIds.map((_, i) => `$${i + 1}`).join(", ");
+    // Comandos das fechaduras ocupadas pelo usuário, sempre na empresa dele
+    const doorsCte = `
+      WITH minhas AS (
+        SELECT ld.id AS door_id, ld.lock_id, ld.label, ld.door_number, l.name, l.location, l.company_id
+        FROM locker_doors ld
+        JOIN lockers l ON l.id = ld.locker_id
+        JOIN funcionarios_clientes fc ON fc.id = ld.occupied_by_person AND fc.company_id = l.company_id
+        WHERE fc.user_id = $1 AND ld.lock_id IS NOT NULL
+      )`;
 
     const { rows } = await pool.query(
-      `SELECT cf.id, cf.acao, cf.lock_id, cf.status, cf.resposta, cf.origem,
+      `${doorsCte}
+       SELECT cf.id, cf.acao, cf.lock_id, cf.status, cf.resposta, cf.origem,
               cf.criado_em, cf.executado_em,
-              COALESCE(ld.label, 'Porta ' || ld.door_number) AS door_label,
-              ld.door_number,
-              l.name AS locker_name,
-              l.location AS locker_location
+              COALESCE(m.label, 'Porta ' || m.door_number) AS door_label,
+              m.door_number,
+              m.name AS locker_name,
+              m.location AS locker_location
        FROM comandos_fechadura cf
-       LEFT JOIN locker_doors ld ON ld.lock_id = cf.lock_id
-       LEFT JOIN lockers l ON l.id = ld.locker_id
-       WHERE cf.lock_id IN (${placeholders})
+       JOIN minhas m ON m.company_id = cf.company_id
+        AND (cf.door_id = m.door_id OR (cf.door_id IS NULL AND m.lock_id = cf.lock_id))
        ORDER BY cf.criado_em DESC
-       LIMIT $${lockIds.length + 1} OFFSET $${lockIds.length + 2}`,
-      [...lockIds, limit, offset]
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
     );
 
     const { rows: countRows } = await pool.query(
-      `SELECT COUNT(*)::int AS total FROM comandos_fechadura WHERE lock_id IN (${placeholders})`,
-      lockIds
+      `${doorsCte}
+       SELECT COUNT(*)::int AS total
+       FROM comandos_fechadura cf
+       JOIN minhas m ON m.company_id = cf.company_id
+        AND (cf.door_id = m.door_id OR (cf.door_id IS NULL AND m.lock_id = cf.lock_id))`,
+      [userId]
     );
 
     res.json({ success: true, data: rows, total: countRows[0]?.total || 0 });
@@ -821,6 +800,15 @@ router.post("/fila", validate(filaSchema), async (req: Request, res: Response) =
     }
 
     const { id: personId, company_id } = personRows[0];
+
+    // O armário precisa ser da empresa da pessoa
+    const { rows: lockerRows } = await pool.query(
+      `SELECT 1 FROM lockers WHERE id = $1 AND company_id = $2`,
+      [locker_id, company_id]
+    );
+    if (!lockerRows[0]) {
+      return res.status(404).json({ success: false, error: "Armário não encontrado" });
+    }
 
     // Check if already waiting
     const { rows: existing } = await pool.query(

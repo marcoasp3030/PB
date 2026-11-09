@@ -3,8 +3,13 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
+import { tenantParam } from "../services/tenant";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("id", tenantParam("departamentos", "Departamento não encontrado"));
+
 
 // ============================================
 // GET /api/departments

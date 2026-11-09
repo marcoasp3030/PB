@@ -1,7 +1,11 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../config/database";
+import { bodyRefsGuard } from "../services/tenant";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+
 
 // ============================================
 // GET /api/reservations
@@ -54,7 +58,7 @@ router.get("/", async (req: Request, res: Response) => {
 // ============================================
 // POST /api/reservations
 // ============================================
-router.post("/", async (req: Request, res: Response) => {
+router.post("/", bodyRefsGuard, async (req: Request, res: Response) => {
   const { door_id, locker_id, person_id, usage_type, expires_at, starts_at, notes } = req.body;
 
   const client = await pool.connect();

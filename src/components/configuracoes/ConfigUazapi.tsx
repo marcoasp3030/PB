@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/lib/supabase-compat";
+import api from "@/lib/api";
 import { useAuth } from "@/contexts/ContextoAutenticacao";
 import { useCompany } from "@/contexts/ContextoEmpresa";
 import { useToast } from "@/hooks/use-toast";
@@ -50,6 +51,11 @@ export default function ConfigUazapi() {
   const [creatingInstance, setCreatingInstance] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
+  // Webhook seguro (URL com segredo)
+  const [globalWebhookUrl, setGlobalWebhookUrl] = useState("");
+  const [companyWebhookUrl, setCompanyWebhookUrl] = useState("");
+  const [configuringWebhook, setConfiguringWebhook] = useState(false);
+
   // Test message
   const [testPhone, setTestPhone] = useState("");
   const [testMessage, setTestMessage] = useState("");
@@ -73,6 +79,12 @@ export default function ConfigUazapi() {
           if (row.key === "uazapi_server_url") setServerUrl((row.value as string) || "");
           if (row.key === "uazapi_admin_token") setAdminToken((row.value as string) || "");
         });
+      }
+      try {
+        const { data: wh } = await api.get("/admin/whatsapp-webhook-global");
+        setGlobalWebhookUrl(wh?.webhook_url || "");
+      } catch {
+        setGlobalWebhookUrl("");
       }
       setLoadingConfig(false);
     };
@@ -125,6 +137,7 @@ export default function ConfigUazapi() {
       } else if (res.data?.status) {
         setInstanceStatus(res.data.status);
         setPhoneNumber(res.data.phone_number || "");
+        setCompanyWebhookUrl(res.data.webhook_url || "");
       }
     } catch {
       // silent
@@ -299,14 +312,14 @@ export default function ConfigUazapi() {
                   <div className="flex gap-2">
                     <Input
                       readOnly
-                      value={`${import.meta.env.VITE_API_URL || "http://localhost:3001/api"}/whatsapp-webhook`}
+                      value={globalWebhookUrl || "Carregando..."}
                       className="font-mono text-xs bg-muted"
                     />
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        navigator.clipboard.writeText(`${import.meta.env.VITE_API_URL || "http://localhost:3001/api"}/whatsapp-webhook`);
+                        navigator.clipboard.writeText(globalWebhookUrl);
                         toast({ title: "URL copiada!" });
                       }}
                     >
@@ -314,7 +327,8 @@ export default function ConfigUazapi() {
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Configure esta URL como webhook na UAZAPI para receber respostas dos botões e comandos interativos.
+                    URL do webhook global (contém um segredo — não compartilhe). A empresa é identificada pela instância.
+                    Prefira a URL própria de cada empresa, exibida na conexão do WhatsApp da empresa.
                   </p>
                 </div>
 
@@ -409,6 +423,49 @@ export default function ConfigUazapi() {
                   <Button variant="outline" size="sm" onClick={handleGetQrCode} disabled={loadingQr}>
                     <RefreshCw className="h-3 w-3 mr-1" /> Atualizar QR Code
                   </Button>
+                </div>
+              )}
+
+              {companyWebhookUrl && (
+                <div className="space-y-2 pt-2">
+                  <Separator />
+                  <Label>Webhook desta empresa</Label>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Input readOnly value={companyWebhookUrl} className="font-mono text-xs bg-muted" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(companyWebhookUrl);
+                        toast({ title: "URL copiada!" });
+                      }}
+                    >
+                      Copiar
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={configuringWebhook}
+                      onClick={async () => {
+                        if (!selectedCompany) return;
+                        setConfiguringWebhook(true);
+                        const res = await supabase.functions.invoke("uazapi-proxy", {
+                          body: { action: "configure_webhook", companyId: selectedCompany.id },
+                        });
+                        setConfiguringWebhook(false);
+                        toast(
+                          res.error || !res.data?.success
+                            ? { title: "Não foi possível configurar automaticamente", description: "Copie a URL e configure na UAZAPI.", variant: "destructive" }
+                            : { title: "Webhook configurado na UAZAPI" }
+                        );
+                      }}
+                    >
+                      {configuringWebhook ? <Loader2 className="h-3 w-3 animate-spin" /> : "Configurar na UAZAPI"}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Contém um segredo exclusivo desta empresa — só mensagens recebidas por esta URL são processadas para ela.
+                  </p>
                 </div>
               )}
             </CardContent>

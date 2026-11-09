@@ -42,7 +42,7 @@ export default function Configuracoes() {
             <Bell className="h-4 w-4" />
             Notificações
           </TabsTrigger>
-          {isAdmin && (
+          {isSuperAdmin && (
             <TabsTrigger value="email" className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm gap-2 text-sm">
               <Mail className="h-4 w-4" />
               E-mail

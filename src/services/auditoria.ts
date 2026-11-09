@@ -135,15 +135,10 @@ export async function verificarBloqueioLogin(email: string): Promise<StatusBloqu
   }
 }
 
-export async function registrarTentativaLogin(email: string, sucesso: boolean) {
-  try {
-    const { error } = await (supabase as any).rpc("register_login_attempt", {
-      _email: email.toLowerCase().trim(),
-      _success: sucesso,
-    });
-
-    if (error) throw error;
-  } catch (err) {
-    console.error("Erro ao registrar tentativa de login:", err);
-  }
+/**
+ * As tentativas de login são registradas pelo próprio servidor em /auth/login.
+ * Mantida apenas por compatibilidade com chamadas existentes.
+ */
+export async function registrarTentativaLogin(_email: string, _sucesso: boolean) {
+  return;
 }

@@ -8,7 +8,10 @@ import {
   createUser,
   changePassword,
   resetPassword,
+  issueTokenForUser,
+  CompanySuspendedError,
 } from "../services/auth.service";
+import { authMiddleware } from "../middleware/auth";
 import { sendEmail } from "../services/email.service";
 import rateLimit from "express-rate-limit";
 
@@ -75,6 +78,10 @@ router.post("/login", loginLimiter, validate(loginSchema), async (req: Request, 
       },
     });
   } catch (err: any) {
+    if (err instanceof CompanySuspendedError) {
+      return res.status(403).json({ error: err.message, code: "company_suspended" });
+    }
+
     // Run failed-login queries in parallel
     const [, lockoutResult] = await Promise.all([
       pool.query(
@@ -135,54 +142,56 @@ router.post("/register", validate(registerSchema), async (req: Request, res: Res
 // ============================================
 // GET /api/auth/me
 // ============================================
-router.get("/me", async (req: Request, res: Response) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
-  if (!token) return res.status(401).json({ error: "Token não fornecido" });
-
+router.get("/me", authMiddleware, async (req: Request, res: Response) => {
   try {
-    const jwt = require("jsonwebtoken");
-    const decoded = jwt.verify(token, process.env.JWT_SECRET) as { sub: string };
-
     const { rows } = await pool.query(
       `SELECT p.user_id, p.role, p.company_id, p.full_name, p.avatar_url,
               p.password_changed, u.email
        FROM profiles p JOIN users u ON u.id = p.user_id
        WHERE p.user_id = $1`,
-      [decoded.sub]
+      [req.user!.user_id]
     );
 
     if (!rows[0]) return res.status(404).json({ error: "Perfil não encontrado" });
 
     res.json({ user: { id: rows[0].user_id, ...rows[0] } });
-  } catch {
-    res.status(401).json({ error: "Token inválido" });
+  } catch (err: any) {
+    res.status(500).json({ error: "Erro ao carregar perfil" });
   }
 });
 
 // ============================================
 // POST /api/auth/change-password
 // ============================================
-const changePasswordSchema = z.object({
-  current_password: z.string().min(1),
-  new_password: z.string().min(6).max(128),
-});
+// Aceita snake_case e camelCase (o portal envia currentPassword/newPassword)
+const changePasswordSchema = z
+  .object({
+    current_password: z.string().min(1).optional(),
+    currentPassword: z.string().min(1).optional(),
+    new_password: z.string().min(6).max(128).optional(),
+    newPassword: z.string().min(6).max(128).optional(),
+  })
+  .transform((d) => ({
+    current_password: d.current_password ?? d.currentPassword ?? "",
+    new_password: d.new_password ?? d.newPassword ?? "",
+  }))
+  .refine((d) => d.current_password.length > 0, { message: "Informe a senha atual", path: ["current_password"] })
+  .refine((d) => d.new_password.length >= 6, { message: "A nova senha deve ter ao menos 6 caracteres", path: ["new_password"] });
 
-router.post("/change-password", validate(changePasswordSchema), async (req: Request, res: Response) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
-  if (!token) return res.status(401).json({ error: "Token não fornecido" });
-
+router.post("/change-password", authMiddleware, validate(changePasswordSchema), async (req: Request, res: Response) => {
+  const userId = req.user!.user_id;
   try {
-    const jwt = require("jsonwebtoken");
-    const decoded = jwt.verify(token, process.env.JWT_SECRET) as { sub: string };
-    await changePassword(decoded.sub, req.body.current_password, req.body.new_password);
+    // Troca a senha e encerra as outras sessões; devolve um token novo para esta
+    await changePassword(userId, req.body.current_password, req.body.new_password);
+    const token = await issueTokenForUser(userId);
 
     await pool.query(
-      `INSERT INTO audit_logs (user_id, action, resource_type, category)
-       VALUES ($1, 'password_change', 'auth', 'auth')`,
-      [decoded.sub]
+      `INSERT INTO audit_logs (user_id, action, resource_type, category, company_id)
+       VALUES ($1, 'password_change', 'auth', 'auth', $2)`,
+      [userId, req.user!.company_id]
     );
 
-    res.json({ message: "Senha alterada com sucesso" });
+    res.json({ message: "Senha alterada com sucesso", token });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }

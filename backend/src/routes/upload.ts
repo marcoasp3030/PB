@@ -46,7 +46,15 @@ const upload = multer({
 // ============================================
 // POST /api/upload/:bucket
 // ============================================
-router.post("/:bucket", upload.single("file"), (req: Request, res: Response) => {
+// Logos/arquivos da plataforma só por admin; avatar qualquer usuário logado
+function bucketGuard(req: Request, res: Response, next: () => void) {
+  if (req.params.bucket === "platform-assets" && !["admin", "superadmin"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Acesso restrito a administradores" });
+  }
+  next();
+}
+
+router.post("/:bucket", bucketGuard, upload.single("file"), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Nenhum arquivo enviado" });
   }
@@ -65,7 +73,15 @@ router.post("/:bucket", upload.single("file"), (req: Request, res: Response) => 
 // DELETE /api/upload/:bucket/:filename
 // ============================================
 router.delete("/:bucket/:filename", (req: Request, res: Response) => {
-  const filePath = path.join(UPLOAD_DIR, req.params.bucket, req.params.filename);
+  if (!["admin", "superadmin"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Acesso restrito a administradores" });
+  }
+  const { bucket, filename } = req.params;
+  // Bloqueia path traversal (ex.: bucket "../..")
+  if (!["avatars", "platform-assets"].includes(bucket) || !/^[\w.-]+$/.test(filename) || filename.startsWith(".")) {
+    return res.status(400).json({ error: "Arquivo inválido" });
+  }
+  const filePath = path.join(UPLOAD_DIR, bucket, filename);
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: "Arquivo não encontrado" });

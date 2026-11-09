@@ -37,6 +37,9 @@ import { systemUpdateRouter } from "./routes/system-update";
 import { changelogRouter } from "./routes/changelog";
 import { fechadurasRouter } from "./routes/fechaduras";
 import { mobileRouter } from "./routes/mobile";
+import { requireAdminOrAbove, requireSuperAdmin } from "./middleware/permissions";
+import { tenantBodyGuard } from "./services/tenant";
+import { runTenantMigrations } from "./config/tenant-migrations";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -81,6 +84,8 @@ app.use(express.json({ limit: "10mb" }));
 // Static files (uploads)
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads";
 app.use("/uploads", express.static(path.resolve(UPLOAD_DIR)));
+// O upload devolve URLs em ${API_URL}/uploads/... (API_URL termina em /api)
+app.use("/api/uploads", express.static(path.resolve(UPLOAD_DIR)));
 
 // ============================================
 // Public Routes (no auth required)
@@ -104,28 +109,28 @@ app.use("/api/mobile", mobileRouter);
 // Protected Routes
 // ============================================
 app.use("/api/companies", authMiddleware, companiesRouter);
-app.use("/api/lockers", authMiddleware, lockersRouter);
-app.use("/api/people", authMiddleware, peopleRouter);
-app.use("/api/departments", authMiddleware, departmentsRouter);
-app.use("/api/sectors", authMiddleware, sectorsRouter);
+app.use("/api/lockers", authMiddleware, requireAdminOrAbove, lockersRouter); // gestão: só admin
+app.use("/api/people", authMiddleware, requireAdminOrAbove, peopleRouter); // gestão: só admin
+app.use("/api/departments", authMiddleware, requireAdminOrAbove, departmentsRouter); // gestão: só admin
+app.use("/api/sectors", authMiddleware, requireAdminOrAbove, sectorsRouter); // gestão: só admin
 app.use("/api/notifications", authMiddleware, notificationsRouter);
-app.use("/api/renewals", authMiddleware, renewalsRouter);
-app.use("/api/waitlist", authMiddleware, waitlistRouter);
-app.use("/api/reservations", authMiddleware, reservationsRouter);
-app.use("/api/audit", authMiddleware, auditRouter);
+app.use("/api/renewals", authMiddleware, requireAdminOrAbove, renewalsRouter); // gestão: só admin
+app.use("/api/waitlist", authMiddleware, requireAdminOrAbove, waitlistRouter); // gestão: só admin
+app.use("/api/reservations", authMiddleware, requireAdminOrAbove, reservationsRouter); // gestão: só admin
+app.use("/api/audit", authMiddleware, requireAdminOrAbove, auditRouter); // gestão: só admin
 app.use("/api/settings", authMiddleware, settingsRouter);
 app.use("/api/admin", authMiddleware, adminRouter);
 app.use("/api/upload", authMiddleware, uploadRouter);
 app.use("/api/email", authMiddleware, emailRouter);
-app.use("/api/whatsapp", authMiddleware, whatsappRouter);
+app.use("/api/whatsapp", authMiddleware, requireSuperAdmin, whatsappRouter); // token global da plataforma
 app.use("/api/compat", authMiddleware, compatRouter);
 app.use("/api/rpc", rpcRouter); // Public - individual functions handle their own security
 app.use("/api/functions", authMiddleware, functionsRouter);
-app.use("/api/smtp", authMiddleware, smtpRouter);
-app.use("/api/email-notify", authMiddleware, emailNotifyRouter);
-app.use("/api/whatsapp-notify", authMiddleware, whatsappNotifyRouter);
-app.use("/api/uazapi-proxy", authMiddleware, uazapiProxyRouter);
-app.use("/api/waitlist-notify", authMiddleware, waitlistNotifyRouter);
+app.use("/api/smtp", authMiddleware, requireAdminOrAbove, smtpRouter);
+app.use("/api/email-notify", authMiddleware, requireAdminOrAbove, tenantBodyGuard, emailNotifyRouter);
+app.use("/api/whatsapp-notify", authMiddleware, requireAdminOrAbove, tenantBodyGuard, whatsappNotifyRouter);
+app.use("/api/uazapi-proxy", authMiddleware, requireAdminOrAbove, tenantBodyGuard, uazapiProxyRouter);
+app.use("/api/waitlist-notify", authMiddleware, requireAdminOrAbove, tenantBodyGuard, waitlistNotifyRouter);
 app.use("/api/system", authMiddleware, systemUpdateRouter);
 
 // ============================================
@@ -145,6 +150,9 @@ async function start() {
     console.error("❌ Não foi possível conectar ao banco. Verifique DATABASE_URL.");
     process.exit(1);
   }
+
+  // Migrações idempotentes (multi-tenant / fechaduras por empresa)
+  await runTenantMigrations();
 
   // Start cron jobs
   startExpireDoorsJob();

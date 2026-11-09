@@ -5,19 +5,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { supabase } from "@/lib/supabase-compat";
 import { useAuth } from "@/contexts/ContextoAutenticacao";
 import { useToast } from "@/hooks/use-toast";
 import { Lock, Loader2, ShieldCheck, Clock, Monitor } from "lucide-react";
 
 export default function ConfigSeguranca() {
-  const { user, session } = useAuth();
+  const { user, session, changePassword } = useAuth();
   const { toast } = useToast();
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleChangePassword = async () => {
+    if (!currentPassword) {
+      toast({ title: "Informe a senha atual", variant: "destructive" });
+      return;
+    }
     if (newPassword.length < 6) {
       toast({ title: "A senha deve ter pelo menos 6 caracteres", variant: "destructive" });
       return;
@@ -29,8 +33,9 @@ export default function ConfigSeguranca() {
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
+      const { error } = await changePassword(currentPassword, newPassword);
+      if (error) throw new Error(error);
+      setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
       toast({ title: "Senha alterada com sucesso!" });
@@ -60,6 +65,17 @@ export default function ConfigSeguranca() {
           <CardDescription>Escolha uma senha forte com pelo menos 6 caracteres</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="space-y-2 sm:max-w-[calc(50%-0.5rem)]">
+            <Label htmlFor="currentPassword">Senha atual</Label>
+            <Input
+              id="currentPassword"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="newPassword">Nova senha</Label>
@@ -83,7 +99,7 @@ export default function ConfigSeguranca() {
             </div>
           </div>
           <div className="flex justify-end">
-            <Button onClick={handleChangePassword} disabled={loading || !newPassword} className="gap-2">
+            <Button onClick={handleChangePassword} disabled={loading || !newPassword || !currentPassword} className="gap-2">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
               Alterar senha
             </Button>

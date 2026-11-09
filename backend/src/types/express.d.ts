@@ -8,5 +8,11 @@ declare namespace Express {
       company_id: string | null;
       full_name: string | null;
     };
+    /** Agente IoT autenticado por API Key (fechaduras) */
+    agente?: {
+      id: string | null;
+      company_id: string | null;
+      global: boolean;
+    };
   }
 }

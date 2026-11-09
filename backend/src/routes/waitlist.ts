@@ -3,8 +3,13 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
+import { tenantParam, bodyRefsGuard } from "../services/tenant";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("id", tenantParam("locker_waitlist", "Entrada não encontrada"));
+
 
 // ============================================
 // GET /api/waitlist
@@ -49,7 +54,7 @@ const createSchema = z.object({
   preferred_size: z.string().default("any"),
 });
 
-router.post("/", requireAdminOrAbove, validate(createSchema), async (req: Request, res: Response) => {
+router.post("/", requireAdminOrAbove, validate(createSchema), bodyRefsGuard, async (req: Request, res: Response) => {
   try {
     const { company_id, locker_id, person_id, preferred_size } = req.body;
 

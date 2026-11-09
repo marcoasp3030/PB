@@ -3,8 +3,13 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdminOrAbove } from "../middleware/permissions";
 import { pool } from "../config/database";
+import { tenantParam, bodyRefsGuard } from "../services/tenant";
 
 const router = Router();
+
+// Isolamento multi-tenant: todo :param abaixo precisa ser da empresa do usuário
+router.param("id", tenantParam("funcionarios_clientes", "Pessoa não encontrada"));
+
 
 function scopeQuery(user: Request["user"], baseIdx: number = 1): { clause: string; params: any[] } {
   if (user!.role === "superadmin") return { clause: "", params: [] };
@@ -97,7 +102,7 @@ const createSchema = z.object({
   notification_expiry: z.boolean().default(true),
 });
 
-router.post("/", requireAdminOrAbove, validate(createSchema), async (req: Request, res: Response) => {
+router.post("/", requireAdminOrAbove, validate(createSchema), bodyRefsGuard, async (req: Request, res: Response) => {
   const data = req.body;
 
   if (req.user!.role !== "superadmin" && data.company_id !== req.user!.company_id) {
@@ -125,9 +130,19 @@ router.post("/", requireAdminOrAbove, validate(createSchema), async (req: Reques
 // ============================================
 // PUT /api/people/:id
 // ============================================
-router.put("/:id", requireAdminOrAbove, async (req: Request, res: Response) => {
+// Campos editáveis (company_id/user_id/id nunca são alterados por esta rota)
+const EDITABLE_FIELDS = [
+  "nome", "email", "telefone", "cargo", "tipo", "matricula", "departamento_id", "setor_id",
+  "notification_whatsapp", "notification_email", "notification_expiry", "notification_renewal",
+  "avatar_url", "ativo",
+];
+
+router.put("/:id", requireAdminOrAbove, bodyRefsGuard, async (req: Request, res: Response) => {
   try {
-    const fields = Object.entries(req.body).filter(([k]) => k !== "id");
+    const invalid = Object.keys(req.body).filter((k) => k !== "id" && !EDITABLE_FIELDS.includes(k));
+    if (invalid.length) return res.status(400).json({ error: `Campos não permitidos: ${invalid.join(", ")}` });
+
+    const fields = Object.entries(req.body).filter(([k]) => EDITABLE_FIELDS.includes(k));
     if (fields.length === 0) return res.status(400).json({ error: "Nenhum campo" });
 
     const sets = fields.map(([key], i) => `${key} = $${i + 2}`).join(", ");
